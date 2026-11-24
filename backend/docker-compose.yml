@@ -1,0 +1,18 @@
+# docker-compose.yml
+# Run `docker compose up -d` in the backend/ folder to get a local
+# Postgres+PostGIS instance with zero manual install. Matches the
+# defaults in db.js — override with env vars for a real deployment.
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: pole_app
+      POSTGRES_PASSWORD: pole_app_dev_password
+      POSTGRES_DB: pole_inspection
+    ports:
+      - "5432:5432"
+    volumes:
+      - pole_inspection_pgdata:/var/lib/postgresql/data
+
+volumes:
+  pole_inspection_pgdata:

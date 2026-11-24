@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "Pole Inspection",
+    "slug": "pole-inspection",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "ios": {
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used to capture pole inspection photos.",
+        "NSLocationWhenInUseUsageDescription": "Used to tag each photo with the pole's GPS location."
+      }
+    },
+    "android": {
+      "permissions": [
+        "CAMERA",
+        "ACCESS_FINE_LOCATION",
+        "VIBRATE"
+      ]
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Used to capture pole inspection photos."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Used to tag each photo with the pole's GPS location."
+        }
+      ],
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "Allow Pole Inspection to read phone tilt for the first photo."
+        }
+      ]
+    ]
+  }
+}
