@@ -525,8 +525,9 @@ export default function CaptureScreen({ pole, onDone }: Props) {
         if (!keepAnyway) return;
       }
       const savedUri = await storage.persistCapturedPhoto(sessionIdRef.current, shot.uri, item.key);
+      const photoUri = typeof savedUri === 'string' && savedUri.length > 0 ?  savedUri : shot.uri; // fallback if persist fails
       const meta: PhotoMeta = {
-        uri: shot.uri,
+        uri: photoUri,
         checklistKey: item.key,
         timestamp: new Date().toISOString(),
         latitude: fix.latitude,

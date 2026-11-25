@@ -1,133 +1,66 @@
-// export interface StraightHoldState {
-//   isInside: boolean;
-//   canCapture: boolean;
-//   justEntered: boolean;
-//   holdProgress: number;
-// }
-
-// // Tracks the entry/exit thresholds and continuous hold duration.
-// export class StraightHoldController {
-//   private isInside = false;
-//   private enteredAtMs: number | null = null;
-//   private canCapture = false;
-
-//   // Update straight-state and hold progress for the latest total tilt.
-//   update(
-//     totalTiltDeg: number,
-//     nowMs: number,
-//     toleranceDeg: number,
-//     hysteresisDeg: number,
-//     holdTimeMs: number
-//   ): StraightHoldState {
-//     const wasInside = this.isInside;
-//     const exitToleranceDeg = toleranceDeg + hysteresisDeg;
-
-//     if (this.isInside && totalTiltDeg > exitToleranceDeg) {
-//       this.isInside = false;
-//       this.enteredAtMs = null;
-//       this.canCapture = false;
-//     } else if (!this.isInside && totalTiltDeg <= toleranceDeg) {
-//       this.isInside = true;
-//       this.enteredAtMs = nowMs;
-//       this.canCapture = holdTimeMs <= 0;
-//     }
-
-//     if (this.isInside && this.enteredAtMs !== null) {
-//       this.canCapture = nowMs - this.enteredAtMs >= holdTimeMs;
-//     }
-
-//     const holdProgress = this.isInside && this.enteredAtMs !== null
-//       ? Math.min(1, Math.max(0, (nowMs - this.enteredAtMs) / Math.max(holdTimeMs, 1)))
-//       : 0;
-
-//     return {
-//       isInside: this.isInside,
-//       canCapture: this.canCapture,
-//       justEntered: this.isInside && !wasInside,
-//       holdProgress,
-//     };
-//   }
-
-//   // Reset the zone and hold timer, such as when the app pauses.
-//   reset(): void {
-//     this.isInside = false;
-//     this.enteredAtMs = null;
-//     this.canCapture = false;
-//   }
-// }
-
 export interface StraightHoldState {
   isInside: boolean;
   canCapture: boolean;
   justEntered: boolean;
-  holdProgress: number;
+  holdProgress: number; // 0..1
 }
 
-// Tracks the entry/exit thresholds and continuous hold duration.
+// Tracks "bubble in zone" and the continuous steady-hold timer.
 export class StraightHoldController {
   private isInside = false;
-  private enteredAtMs: number | null = null;
-  private referenceValueDeg: number | null = null;
-  private canCapture = false;
+  private holdStartMs: number | null = null;
+  private refXDeg: number | null = null;
+  private refYDeg: number | null = null;
 
-  // Update alignment, hold stability, and the continuous hold timer.
-  update(
-    alignmentErrorDeg: number,
-    nowMs: number,
-    toleranceDeg: number,
-    hysteresisDeg: number,
-    holdTimeMs: number,
-    stableValueDeg = 0,
-    maximumDriftDeg = Number.POSITIVE_INFINITY,
-    eligible = true
-  ): StraightHoldState {
+  constructor(private readonly holdTimeMs: number, private readonly maxDriftDeg: number) {}
+
+  // Used by the zone check to apply hysteresis only after entering.
+  get inside(): boolean {
+    return this.isInside;
+  }
+
+  update(inZone: boolean, xDeg: number, yDeg: number, nowMs: number): StraightHoldState {
     const wasInside = this.isInside;
-    const exitToleranceDeg = toleranceDeg + hysteresisDeg;
 
-    if (!eligible || (this.isInside && alignmentErrorDeg > exitToleranceDeg)) {
-      this.isInside = false;
-      this.enteredAtMs = null;
-      this.referenceValueDeg = null;
-      this.canCapture = false;
-    } else if (!this.isInside && alignmentErrorDeg <= toleranceDeg) {
+    if (!inZone) {
+      this.reset();
+      return { isInside: false, canCapture: false, justEntered: false, holdProgress: 0 };
+    }
+
+    if (!this.isInside) {
+      // Just entered the zone: start the hold.
       this.isInside = true;
-      this.enteredAtMs = nowMs;
-      this.referenceValueDeg = stableValueDeg;
-      this.canCapture = holdTimeMs <= 0;
-    }
-
-    // Restart the hold if the aimed-up angle itself changes while aligned.
-    if (
-      this.isInside &&
-      this.referenceValueDeg !== null &&
-      Math.abs(stableValueDeg - this.referenceValueDeg) > maximumDriftDeg
+      this.restartHold(xDeg, yDeg, nowMs);
+    } else if (
+      this.refXDeg !== null &&
+      this.refYDeg !== null &&
+      (Math.abs(xDeg - this.refXDeg) > this.maxDriftDeg || Math.abs(yDeg - this.refYDeg) > this.maxDriftDeg)
     ) {
-      this.enteredAtMs = nowMs;
-      this.referenceValueDeg = stableValueDeg;
-      this.canCapture = holdTimeMs <= 0;
+      // Still in zone but the phone moved: restart the hold from here.
+      this.restartHold(xDeg, yDeg, nowMs);
     }
 
-    if (this.isInside && this.enteredAtMs !== null) {
-      this.canCapture = nowMs - this.enteredAtMs >= holdTimeMs;
-    }
-
-    const holdProgress = this.isInside && this.enteredAtMs !== null
-      ? Math.min(1, Math.max(0, (nowMs - this.enteredAtMs) / Math.max(holdTimeMs, 1)))
-      : 0;
+    const elapsedMs = nowMs - (this.holdStartMs ?? nowMs);
+    const holdProgress = this.holdTimeMs <= 0 ? 1 : Math.min(1, Math.max(0, elapsedMs / this.holdTimeMs));
 
     return {
-      isInside: this.isInside,
-      canCapture: this.canCapture,
-      justEntered: this.isInside && !wasInside,
+      isInside: true,
+      canCapture: elapsedMs >= this.holdTimeMs,
+      justEntered: !wasInside,
       holdProgress,
     };
   }
 
-  // Reset the zone and hold timer, such as when the app pauses.
   reset(): void {
     this.isInside = false;
-    this.enteredAtMs = null;
-    this.referenceValueDeg = null;
-    this.canCapture = false;
+    this.holdStartMs = null;
+    this.refXDeg = null;
+    this.refYDeg = null;
+  }
+
+  private restartHold(xDeg: number, yDeg: number, nowMs: number): void {
+    this.holdStartMs = nowMs;
+    this.refXDeg = xDeg;
+    this.refYDeg = yDeg;
   }
 }

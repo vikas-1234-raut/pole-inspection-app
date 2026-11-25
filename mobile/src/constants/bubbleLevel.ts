@@ -1,39 +1,42 @@
-// // Bubble level tuning values. Keep axis direction switches together here so
-// // real-phone direction corrections do not require changes across the feature.
-// export const BUBBLE_LEVEL_SETTINGS = {
-//   alpha: 0.15,
-//   toleranceDeg: 2,
-//   hysteresisDeg: 1,
-//   holdTimeMs: 1000,
-//   maxAngleDeg: 15,
-//   sampleIntervalMs: 100,
-//   viewSize: 210,
-//   bubbleDiameter: 26,
-//   xAxisSign: 1,
-//   yAxisSign: 1,
-//   bubbleXSign: 1,
-//   bubbleYSign: -1,
-// } as const;
+import { Platform } from 'react-native';
 
-// Bubble level tuning values. Keep axis direction switches together here so
-// real-phone direction corrections do not require changes across the feature.
+// Bubble level settings. All direction (sign) corrections live ONLY here.
+// Reference: phone lying FLAT, screen facing the sky = X 0°, Y 0°, bubble at centre.
 export const BUBBLE_LEVEL_SETTINGS = {
-  // Smaller alpha filters more hand/sensor shake. Adjust on the real phone if response feels delayed.
-  alpha: 0.06,
-  toleranceDeg: 2,
-  hysteresisDeg: 1,
-  holdTimeMs: 1000,
-  maximumHoldDriftDeg: 1,
-  maxAngleDeg: 15,
+  // ---- Sensor ----
+  // Higher alpha = faster bubble, lower alpha = smoother bubble.
+  alpha: 0.15,
   sampleIntervalMs: 100,
-  animationSpeed: 5,
+
+  // ---- Capture zone ----
+  // Y: 0 = flat, + = top edge raised (bubble up), - = top edge lowered (bubble down).
+  yMinDeg: 0,
+  yMaxDeg: 90,
+  // X: how far the bubble may be from the vertical line (degrees).
+  xToleranceDeg: 3,
+  // Once inside, edges widen by this much so the zone does not flicker.
+  hysteresisDeg: 1,
+
+  // ---- Steady hold ----
+  holdTimeMs: 1000,
+  // Moving more than this (either axis) during the hold restarts the timer.
+  maximumHoldDriftDeg: 1,
+
+  // ---- Display ----
+  // Angle that maps to the edge of the circle. Bigger = bubble moves less per degree.
+  maxAngleDeg: 30,
+  animationDurationMs: 120,
   positionStepPx: 2,
   viewSize: 210,
   bubbleDiameter: 26,
-  xAxisSign: 1,
-  yAxisSign: 1,
-  bubbleXSign: 1,
-  // Flip this if upward phone tilt sends the bubble down on screen.
-  bubbleYSign: 1,
-} as const;
+  // Centre target ring = bubble diameter + this margin on each side.
+  centerTargetMarginPx: 4,
+  // Within this many degrees of (0,0) the centre ring turns green.
+  centerToleranceDeg: 1.5,
 
+  // ---- Calibration (flip to -1 if a direction is wrong on your phone) ----
+  // + X = right edge raised → bubble right. + Y = top edge raised → bubble up.
+  // iOS reports accelerometer axes with the opposite sign to Android.
+  xSensorSign: Platform.OS === 'ios' ? -1 : 1,
+  ySensorSign: Platform.OS === 'ios' ? -1 : 1,
+};
