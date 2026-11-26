@@ -28,9 +28,9 @@ import { CapturedPole } from '../types';
 type Props = { onPoleReady: (pole: CapturedPole) => void };
 type Phase = 'ready' | 'registering';
 
-const TARGET_ACCURACY_M = 5;
+const TARGET_ACCURACY_M = 20;
 const MAX_WAIT_MS = 30_000;
-const ACCEPT_AFTER_TIMEOUT_M = 15;
+const ACCEPT_AFTER_TIMEOUT_M = 35;
 
 export default function PoleIdScreen({ onPoleReady }: Props) {
   const [phase, setPhase] = useState<Phase>('ready');

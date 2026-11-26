@@ -7,7 +7,7 @@ import { InspectionRecord } from '../types';
 
 export type UploadOutcome =
   | { result: 'uploaded' }
-  | { result: 'queued'; reason: 'offline' | 'server_unreachable' | 'server_error'; detail?: string };
+  | { result: 'queued'; reason: 'offline' | 'server_unreachable' | 'server_error' | 'photo_missing'; detail?: string };
 
 export async function attemptUpload(record: InspectionRecord): Promise<UploadOutcome> {
   if (!(await network.isConnected())) {
@@ -42,7 +42,10 @@ export async function attemptUpload(record: InspectionRecord): Promise<UploadOut
     }
     return {
       result: 'queued',
-      reason: err instanceof api.HttpError ? 'server_error' : 'server_unreachable',
+      reason:
+        err instanceof api.PhotoMissingError ? 'photo_missing'
+        : err instanceof api.HttpError ? 'server_error'
+        : 'server_unreachable',
       detail: err?.message,
     };
   }

@@ -9,13 +9,21 @@ import * as SecureStore from 'expo-secure-store';
 import * as FileSystem from 'expo-file-system/legacy';
 import { CapturedPole, InspectionRecord } from '../types';
 
-const API_BASE_URL = 'http://192.168.11.76:4000'; // set to your machine's LAN IP for a real device
+const API_BASE_URL = 'http://10.221.148.180:4000'; // set to your machine's LAN IP for a real device
 
 export class HttpError extends Error {
   status: number;
   constructor(status: number, message: string) {
     super(message);
     this.status = status;
+  }
+}
+
+export class PhotoMissingError extends Error {
+  checklistKey: string;
+  constructor(checklistKey: string) {
+    super(`Photo file missing: ${checklistKey}`);
+    this.checklistKey = checklistKey;
   }
 }
 
@@ -42,13 +50,33 @@ async function authHeaders(): Promise<Record<string, string>> {
 // Used by ReviewerScreen's <Image> components — RN's Image accepts
 // { uri, headers }, which is how we view protected /uploads images
 // without exposing them as a public static folder.
-export async function authorizedImageSource(
-  relativePath: string
-): Promise<{ uri: string; headers: Record<string, string> }> {
-  const headers = await authHeaders();
-  return { uri: `${API_BASE_URL}/uploads/${relativePath}`, headers };
-}
+const IMAGE_CACHE_DIR = `${FileSystem.cacheDirectory}review-images/`;
 
+// Downloads a protected /uploads image WITH the JWT into the phone cache and
+// returns the local file. <Image> then shows a local file, so it does not
+// need to send the Authorization header itself.
+export async function authorizedImageSource(relativePath: string): Promise<{ uri: string }> {
+  const cleanPath = String(relativePath || '')
+    .replace(/\\/g, '/')        // Windows backslashes → URL slashes
+    .replace(/^\/+/, '')
+    .replace(/^uploads\//, ''); // avoid /uploads/uploads/
+  const url = `${API_BASE_URL}/uploads/${cleanPath.split('/').map(encodeURIComponent).join('/')}`;
+  const localUri = `${IMAGE_CACHE_DIR}${cleanPath.replace(/\//g, '_')}`;
+
+  const cached = await FileSystem.getInfoAsync(localUri);
+  if (cached.exists && ((cached as any).size ?? 0) > 0) return { uri: localUri };
+
+  await FileSystem.makeDirectoryAsync(IMAGE_CACHE_DIR, { intermediates: true }).catch(() => {});
+  const headers = await authHeaders();
+  const result = await FileSystem.downloadAsync(url, localUri, { headers });
+
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(localUri, { idempotent: true });
+    console.log('[review image] HTTP', result.status, url);
+    throw new HttpError(result.status, `Image load failed: ${result.status}`);
+  }
+  return { uri: result.uri };
+}
 // --- Poles ---
 
 export async function findNearestMasterPole(
@@ -130,7 +158,7 @@ export async function uploadInspection(
     const fileUri = p.uri.startsWith('file://') ? p.uri : `file://${p.uri}`;
     const info = await FileSystem.getInfoAsync(fileUri);
     console.log('[upload] file', p.checklistKey, info.exists, (info as any).size, fileUri);
-    if (!info.exists) throw new Error(`Photo file missing: ${p.checklistKey}`);
+    if (!info.exists) throw new PhotoMissingError(`Photo file missing: ${p.checklistKey}`);
   }
 
   const form = new FormData();

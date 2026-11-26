@@ -12,7 +12,8 @@
 import { ChecklistItem } from '../types';
 
 export const CHECKLIST_ITEMS: ChecklistItem[] = [
-  { key: 'pole_bend', label: 'Pole Bend', priority: 'High', minPhotos: 2, maxPhotos: 4, minAngleSeparationDeg: 80, fullPoleShot: true,
+  //minAngleSeparationDeg: 80
+  { key: 'pole_bend', label: 'Pole Bend', priority: 'High', minPhotos: 2, maxPhotos: 4, fullPoleShot: true, 
     shotGuidance: 'Full pole, base to top. Hold phone vertical. Capture from 2+ angles — walk around the pole between shots.' },
   { key: 'earthing', label: 'Earthing', priority: 'High', minPhotos: 1, maxPhotos: 3, fullPoleShot: false,
     shotGuidance: 'Close-up at the pole base showing the earthing wire/strip.' },

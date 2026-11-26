@@ -66,7 +66,7 @@ export function useBubbleLevel(enabled: boolean): BubbleLevelState {
   const yFilter = useRef(new LowPassFilter());
   const zFilter = useRef(new LowPassFilter());
   const holdController = useRef(
-    new StraightHoldController(settings.holdTimeMs, settings.maximumHoldDriftDeg)
+    new StraightHoldController(settings.holdTimeMs, settings.maximumHoldDriftDeg, settings.exitGraceMs)
   );
 
   useEffect(() => {

@@ -1,19 +1,10 @@
 // ReviewerScreen.tsx
 //
-// v3 rewrite (fixes the reported bug + adds real per-photo labeling):
-// "review one image, option to label it healthy or 11 fault
-// identification, if other than 11 fault then other option and can write
-// there what other is there."
-//
-// Tapping a photo opens an inline label panel for THAT photo:
-//   - Healthy button (clears any fault selection)
-//   - the 11 checklist items as multi-select fault chips
-//   - an "Other" toggle revealing a free-text field
-// Saving calls api.labelPhoto() immediately (per-photo, not batched), so
-// a reviewer's progress isn't lost if they get interrupted partway
-// through an inspection. Once every photo in an inspection has a
-// non-'unreviewed' status, "Complete Review" becomes enabled and calls
-// api.completeInspection(), which aggregates server-side.
+// v4: photos are downloaded with the JWT into the phone cache
+// (api.authorizedImageSource) and shown from that local file. The <Image>
+// no longer depends on sending an Authorization header itself.
+// Each photo box shows a spinner while loading, or the HTTP error
+// (e.g. "Error 401" / "Error 404") if the server refuses the image.
 
 import React, { useEffect, useState } from 'react';
 import { View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Button, TextInput, Alert } from 'react-native';
@@ -113,14 +104,30 @@ export default function ReviewerScreen() {
 }
 
 function PhotoCell({ photo, isOpen, onToggle, onSaved, inspectionId }: any) {
-  const [source, setSource] = useState<{ uri: string; headers: Record<string, string> } | null>(null);
+  const [source, setSource] = useState<{ uri: string } | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
   const [faults, setFaults] = useState<string[]>(photo.label_faults || []);
   const [otherOn, setOtherOn] = useState(!!photo.label_other_text);
   const [otherText, setOtherText] = useState(photo.label_other_text || '');
   const [saving, setSaving] = useState(false);
 
+  // Download the protected image (with JWT) into the cache, then show it.
   useEffect(() => {
-    api.authorizedImageSource(photo.filepath).then(setSource);
+    let active = true;
+    setSource(null);
+    setImageError(null);
+    api
+      .authorizedImageSource(photo.filepath)
+      .then((s) => {
+        if (active) setSource(s);
+      })
+      .catch((err: any) => {
+        console.log('[review image] load failed', photo.filepath, err?.status, err?.message);
+        if (active) setImageError(err?.status ? `Error ${err.status}` : 'Load failed');
+      });
+    return () => {
+      active = false;
+    };
   }, [photo.filepath]);
 
   function toggleFault(key: string) {
@@ -132,6 +139,8 @@ function PhotoCell({ photo, isOpen, onToggle, onSaved, inspectionId }: any) {
     try {
       await api.labelPhoto(inspectionId, photo.id, { status: 'healthy', faults: [], otherText: undefined });
       onSaved();
+    } catch (err: any) {
+      Alert.alert('Could not save label', err.message || 'Try again.');
     } finally {
       setSaving(false);
     }
@@ -150,17 +159,34 @@ function PhotoCell({ photo, isOpen, onToggle, onSaved, inspectionId }: any) {
         otherText: otherText.trim() || undefined,
       });
       onSaved();
+    } catch (err: any) {
+      Alert.alert('Could not save label', err.message || 'Try again.');
     } finally {
       setSaving(false);
     }
   }
 
   const statusColor = photo.label_status === 'healthy' ? '#16a34a' : photo.label_status === 'faulty' ? '#dc2626' : '#999';
+  const frame = [styles.photo, { borderColor: statusColor, borderWidth: 2 }];
 
   return (
     <View style={styles.photoCell}>
       <TouchableOpacity onPress={onToggle}>
-        {source && <Image source={source} style={[styles.photo, { borderColor: statusColor, borderWidth: 2 }]} />}
+        {source && !imageError ? (
+          <Image
+            source={source}
+            style={frame}
+            resizeMode="cover"
+            onError={(e) => {
+              console.log('[review image] display error', photo.filepath, e.nativeEvent?.error);
+              setImageError('Cannot display');
+            }}
+          />
+        ) : (
+          <View style={[frame, styles.photoPlaceholder]}>
+            {imageError ? <Text style={styles.photoError}>{imageError}</Text> : <ActivityIndicator />}
+          </View>
+        )}
         <Text style={styles.photoLabel}>{photo.checklist_key}</Text>
         <Text style={[styles.statusTag, { color: statusColor }]}>{photo.label_status}</Text>
       </TouchableOpacity>
@@ -218,6 +244,8 @@ const styles = StyleSheet.create({
   photoRow: { marginVertical: 8 },
   photoCell: { marginRight: 10, width: 140 },
   photo: { width: 120, height: 120, borderRadius: 6 },
+  photoPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#f5f5f5' },
+  photoError: { color: '#b91c1c', fontSize: 11, fontWeight: '700', textAlign: 'center' },
   photoLabel: { fontSize: 11, color: '#666', marginTop: 2 },
   statusTag: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
   labelPanel: { marginTop: 6, width: 260, borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 8 },

@@ -15,7 +15,7 @@ import * as SecureStore from 'expo-secure-store';
 import { AuthUser } from '../types';
 
 const TOKEN_KEY = 'pole_inspection_jwt';
-const API_BASE_URL = 'http://192.168.11.76:4000';
+const API_BASE_URL = 'http://10.221.148.180:4000';
 
 export async function login(username: string, password: string): Promise<AuthUser> {
   const res = await fetch(`${API_BASE_URL}/api/auth/login`, {

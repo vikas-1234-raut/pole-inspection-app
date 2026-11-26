@@ -18,6 +18,12 @@
 //    * Remove outliers, weighted average (1/accuracy^2), conservative accuracy estimate.
 //    * Lock only when accuracy <= target with >= minSamples readings.
 //
+// v2 (flicker fix): normal hand shake no longer counts as "moving".
+//    * Stillness threshold raised from 0.04 g to 0.08 g (hand-held phone).
+//    * Movement must last >= moveConfirmMs (default 2 s) before it counts.
+//    Before this, small hand tremor -> "moving" -> onMove 'clear' -> samples = []
+//    -> fix = null -> PoleIdScreen jumped back to "Getting GPS fix…" every 1-3 s.
+//
 // Needs:  npx expo install expo-location expo-sensors
 
 import * as Location from 'expo-location';
@@ -71,7 +77,7 @@ export type GpsErrorCode = ProviderErrorCode | 'unknown';
 export interface TrackerOptions {
   /** Request mode, like AngleCam's request configs. Use 'high' for inspection. Default 'high'. */
   mode?: GpsMode;
-  /** Lock when estimated accuracy <= this (metres). Default 5. */
+  /** Lock when estimated accuracy <= this (metres). Default 20. */
   targetAccuracyM?: number;
   /** After this long without a lock, status becomes 'timeout'. Default 30000. */
   maxWaitMs?: number;
@@ -85,6 +91,10 @@ export interface TrackerOptions {
   maxSampleLifeMs?: number;
   /** Use the accelerometer to detect movement. Default true. */
   requireStill?: boolean;
+  /** Shake (std-dev of |accel| in g) above this counts as movement. Default 0.08. */
+  stillThresholdG?: number;
+  /** Movement must continue this long (ms) before it counts. Default 2000. */
+  moveConfirmMs?: number;
   /** 'clear' = restart averaging on movement, 'ignore' = pause adding. Default 'clear'. */
   onMove?: 'clear' | 'ignore';
   /** Show a cached last-known position until the first live reading. Default true. */
@@ -157,9 +167,11 @@ function combine(samples: Sample[]) {
 
 // ---------------------------------------------------------------- Stillness (accelerometer)
 
-function createStillnessMonitor(thresholdG = 0.04, windowSize = 10) {
+// "Still" = no SUSTAINED shaking. Hand tremor and short bumps are ignored;
+// only shaking that lasts >= moveConfirmMs (e.g. walking) counts as movement.
+function createStillnessMonitor(thresholdG: number, moveConfirmMs: number, windowSize = 10) {
   const mags: number[] = [];
-  let still = true;
+  let shakingSince: number | null = null;
   Accelerometer.setUpdateInterval(100);
   const sub = Accelerometer.addListener(({ x, y, z }) => {
     mags.push(Math.sqrt(x * x + y * y + z * z));
@@ -167,10 +179,15 @@ function createStillnessMonitor(thresholdG = 0.04, windowSize = 10) {
     if (mags.length === windowSize) {
       const mean = mags.reduce((a, b) => a + b, 0) / windowSize;
       const variance = mags.reduce((a, b) => a + (b - mean) ** 2, 0) / windowSize;
-      still = Math.sqrt(variance) < thresholdG;
+      const shaking = Math.sqrt(variance) >= thresholdG;
+      if (!shaking) shakingSince = null;
+      else if (shakingSince === null) shakingSince = Date.now();
     }
   });
-  return { isStill: () => still, stop: () => sub.remove() };
+  return {
+    isStill: () => shakingSince === null || Date.now() - shakingSince < moveConfirmMs,
+    stop: () => sub.remove(),
+  };
 }
 
 // ---------------------------------------------------------------- Tracker
@@ -184,6 +201,8 @@ const DEFAULTS: Required<TrackerOptions> = {
   maxSampleAgeMs: 5_000,
   maxSampleLifeMs: 60_000,
   requireStill: true,
+  stillThresholdG: 0.08,
+  moveConfirmMs: 2_000,
   onMove: 'clear',
   useLastKnownPreview: true,
 };
@@ -347,7 +366,7 @@ class GpsTracker {
       }
 
       // 4) Continuous updates (AngleCam requests 0 ms / 0 m)
-      this.still = createStillnessMonitor();
+      this.still = createStillnessMonitor(this.opts.stillThresholdG, this.opts.moveConfirmMs);
       this.armTimeout();
       const sub = await Location.watchPositionAsync(
         {
@@ -408,6 +427,7 @@ class GpsTracker {
     const stale = now - loc.timestamp > o.maxSampleAgeMs;
     const mocked = (loc as { mocked?: boolean }).mocked === true;
     const bad = acc == null || acc <= 0 || acc > o.maxSampleAccuracyM;
+    // Only SUSTAINED movement (walking) counts — see createStillnessMonitor.
     const moving = o.requireStill && !this.isStill;
 
     if (moving) {
