@@ -1,100 +1,153 @@
 // App.tsx
 //
-// Root navigation, now role-aware:
-//   no user            -> LoginScreen
-//   role 'field'        -> PoleIdScreen -> CaptureScreen
-//   role 'reviewer'      -> ReviewerScreen
-//   role 'admin'          -> both, with a toggle (sees everything)
-// The role check here is a UI convenience only — every protected backend
-// endpoint re-checks the role from the verified JWT independently
-// (middleware/auth.js), so this file being bypassed somehow still
-// wouldn't grant real access to anything.
+// Root of the mobile app. Everything is wrapped in <SafeAreaProvider>, which the
+// new screens need (useSafeAreaInsets). Without it you get:
+//   "No safe area value available. Make sure you are rendering <SafeAreaProvider>…"
+//
+// Flow:
+//   not logged in            → LoginScreen
+//   role 'reviewer'/'admin'  → ReviewerScreen
+//   role 'field'             → PoleIdScreen → CaptureScreen → back to PoleIdScreen
+//
+// Pending (offline) inspections are retried when the app starts, after login,
+// and whenever the app comes back to the foreground.
 
-import React, { useEffect, useState } from 'react';
-import { SafeAreaView, StatusBar, View, Button, Text } from 'react-native';
-import PermissionsGateScreen from './src/screens/PermissionsGateScreen';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, AppState, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+
 import LoginScreen from './src/screens/LoginScreen';
 import PoleIdScreen from './src/screens/PoleIdScreen';
 import CaptureScreen from './src/screens/CaptureScreen';
 import ReviewerScreen from './src/screens/ReviewerScreen';
+import Button from './src/components/Button';
 import * as auth from './src/services/auth';
-import * as network from './src/services/network';
-import * as SecureStore from 'expo-secure-store';
 import * as syncService from './src/services/syncService';
 import { AuthUser, CapturedPole } from './src/types';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-
+import { colors, font, spacing } from './src/theme';
 
 export default function App() {
-  const [permissionsGranted, setPermissionsGranted] = useState(false);
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [adminView, setAdminView] = useState<'capture' | 'review'>('review');
-  const [selectedPole, setSelectedPole] = useState<CapturedPole | null>(null);
-
-  useEffect(() => {
-  (async () => {
-    await AsyncStorage.removeItem('pole_inspection_pending_queue_v1'); // TEMP: remove after one run
-  })();
-}, []);
-
-  useEffect(() => {
-    auth.getCurrentUser().then((u) => {
-      setUser(u);
-      setCheckingSession(false);
-    });
-
-    syncService.processQueue();
-    const unsubscribe = network.subscribeToReconnect(() => syncService.processQueue());
-    return unsubscribe;
-  }, []);
-
-  if (checkingSession) return <SafeAreaView style={{ flex: 1 }} />;
-
-  if (!permissionsGranted) {
-    return (
-      <SafeAreaView style={{ flex: 1 }}>
-        <StatusBar barStyle="dark-content" />
-        <PermissionsGateScreen onGranted={() => setPermissionsGranted(true)} />
-      </SafeAreaView>
-    );
-  }
-
-  if (!user) {
-    return (
-      <SafeAreaView style={{ flex: 1 }}>
-        <StatusBar barStyle="dark-content" />
-        <LoginScreen onLoggedIn={setUser} />
-      </SafeAreaView>
-    );
-  }
-
-  const effectiveView = user.role === 'field' ? 'capture' : user.role === 'reviewer' ? 'review' : adminView;
-
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <StatusBar barStyle="dark-content" />
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 8 }}>
-        <Text>{user.username} ({user.role})</Text>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          {user.role === 'admin' && (
-            <Button
-              title={adminView === 'capture' ? 'View Reviewer' : 'View Capture'}
-              onPress={() => setAdminView(adminView === 'capture' ? 'review' : 'capture')}
-            />
-          )}
-          <Button title="Log Out" onPress={() => auth.logout().then(() => setUser(null))} />
-        </View>
-      </View>
-
-      {effectiveView === 'review' ? (
-        <ReviewerScreen />
-      ) : selectedPole ? (
-        <CaptureScreen pole={selectedPole} onDone={() => setSelectedPole(null)} />
-      ) : (
-        <PoleIdScreen onPoleReady={setSelectedPole} />
-      )}
-    </SafeAreaView>
+    <SafeAreaProvider>
+      <AppContent />
+    </SafeAreaProvider>
   );
 }
+
+function AppContent() {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [checkingLogin, setCheckingLogin] = useState(true);
+  const [pole, setPole] = useState<CapturedPole | null>(null);
+
+  // Upload anything saved offline. Silent: failures stay in the queue for next time.
+  const syncPending = useCallback(async () => {
+    try {
+      const out = await syncService.processQueue();
+      if (out.uploaded > 0 || out.stillQueued > 0) console.log('[sync] queue:', out);
+    } catch (err) {
+      console.log('[sync] queue processing failed:', (err as Error)?.message);
+    }
+  }, []);
+
+  // Restore the saved login on start.
+  useEffect(() => {
+    (async () => {
+      try {
+        setUser(await auth.getCurrentUser());
+      } finally {
+        setCheckingLogin(false);
+      }
+    })();
+  }, []);
+
+  // Retry the offline queue after login and whenever the app returns to the foreground.
+  useEffect(() => {
+    if (!user || user.role === 'reviewer') return;
+    void syncPending();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void syncPending();
+    });
+    return () => sub.remove();
+  }, [user, syncPending]);
+
+  async function handleLogout() {
+    await auth.logout();
+    setPole(null);
+    setUser(null);
+  }
+
+  // ---- Loading saved login ----
+  if (checkingLogin) {
+    return (
+      <View style={styles.loading}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.navy} />
+        <ActivityIndicator color={colors.amber} size="large" />
+      </View>
+    );
+  }
+
+  // ---- Not logged in ----
+  if (!user) {
+    return <LoginScreen onLoggedIn={setUser} />;
+  }
+
+  // ---- Reviewer / admin ----
+  if (user.role === 'reviewer' || user.role === 'admin') {
+    return (
+      <SafeAreaView style={styles.reviewerRoot} edges={['top', 'bottom']}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.navy} />
+        <View style={styles.reviewerHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.hello}>Hi, {user.username}</Text>
+            <View style={styles.roleBadge}>
+              <Text style={styles.roleText}>{String(user.role).toUpperCase()}</Text>
+            </View>
+          </View>
+          <Button title="Log out" variant="outline" small onPress={handleLogout} />
+        </View>
+        <View style={{ flex: 1, backgroundColor: colors.bg }}>
+          <ReviewerScreen />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ---- Field worker: capture flow ----
+  if (pole) {
+    return (
+      <CaptureScreen
+        pole={pole}
+        onDone={() => {
+          setPole(null);
+          void syncPending();
+        }}
+        onClose={() => setPole(null)}
+      />
+    );
+  }
+
+  return <PoleIdScreen user={user} onLogout={handleLogout} onPoleReady={setPole} />;
+}
+
+const styles = StyleSheet.create({
+  loading: { flex: 1, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },
+  reviewerRoot: { flex: 1, backgroundColor: colors.navy },
+  reviewerHeader: {
+    backgroundColor: colors.navy,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  hello: { color: colors.white, fontSize: font.h2, fontWeight: '800' },
+  roleBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    backgroundColor: colors.amber,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  roleText: { color: colors.navy, fontSize: font.tiny, fontWeight: '800', letterSpacing: 0.6 },
+});

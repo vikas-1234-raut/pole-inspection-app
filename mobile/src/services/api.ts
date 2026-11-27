@@ -9,7 +9,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as FileSystem from 'expo-file-system/legacy';
 import { CapturedPole, InspectionRecord } from '../types';
 
-const API_BASE_URL = 'http://10.221.148.180:4000'; // set to your machine's LAN IP for a real device
+const API_BASE_URL = 'http://192.168.11.76:4000'; // set to your machine's LAN IP for a real device
 
 export class HttpError extends Error {
   status: number;

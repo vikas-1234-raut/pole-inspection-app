@@ -15,7 +15,8 @@
         "CAMERA",
         "ACCESS_FINE_LOCATION",
         "VIBRATE"
-      ]
+      ],
+      "softwareKeyboardLayoutMode" : "pan"
     },
     "plugins": [
       "expo-asset",
